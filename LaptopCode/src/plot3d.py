@@ -3,6 +3,9 @@ import numpy as np
 import plotly.graph_objects as go
 from skimage.filters import threshold_otsu
 
+import kaleido
+from pathlib import Path
+
 def prepare_volume_data(filename, use_Otsu=False, dynamic_range_db=15.0):
     """Loads npz data and converts to independent absolute/relative dB values."""
     npz_path = f'{definitions.PROCESS_SAVE_FILE}/volumes/{filename}.npz'
@@ -70,7 +73,7 @@ def plot_overlay_volumes(filename1, filename2, dr_db1=10.0, dr_db2=6.0,
         name=f"Scan 1: {filename1}",
         caps=dict(x_show=False, y_show=False, z_show=False),
         colorbar=dict(
-            title=f"Scan 1 [dBFS]<br>({filename1})",
+            title=f"Unaltered",
             x=1.00,        # Positioned at right edge
             len=0.75
         )
@@ -88,7 +91,7 @@ def plot_overlay_volumes(filename1, filename2, dr_db1=10.0, dr_db2=6.0,
         name=f"Scan 2: {filename2}",
         caps=dict(x_show=False, y_show=False, z_show=False),
         colorbar=dict(
-            title=f"Scan 2 [dBFS]<br>({filename2})",
+            title=f"Weighted & SVD [dB, a.u]",
             x=1.15,        # Offset further right to avoid colorbar overlap
             len=0.75
         )
@@ -121,6 +124,22 @@ def plot_overlay_volumes(filename1, filename2, dr_db1=10.0, dr_db2=6.0,
     fig.write_html(out_path)
     print(f"Saved dual overlay plot to {out_path}")
     webbrowser.open(os.path.abspath(out_path))
+
+    out_path_png = f"{Path(__file__).resolve().parent.parent.parent.parent}/Report/Figures/{filename1}_detection"
+    fig.write_image(f"{out_path_png}.png", scale=1, width=900, height=500)
+    print(f"Saved png to {out_path_png}.png")
+    fig.update_layout(
+        scene=dict(
+            camera=dict(
+                up=dict(x=0, y=1, z=0),
+                center=dict(x=0, y=0, z=0),
+                eye=dict(x=-2.5, y=0, z=0)  # Inverted X position to swing axes to bottom/left
+            ),
+            zaxis=dict(autorange="reversed")  # Flips depth direction if needed for bottom alignment
+        )
+    )
+    fig.write_image(f"{out_path_png}YZ.png", scale=1, width=500, height=470)
+    print(f"Saved png to {out_path_png}YZ.png")
 
 def auto_scale_volume_dB(vol_db_rel, max_dynamic_range_db=15.0):
     """Calculates an automated statistical threshold (Otsu) on a relative dB volume.
@@ -159,11 +178,6 @@ def plot_interactive_volume(filename, dynamic_range_db=6.0, use_Otsu=False, save
     z_vec_mm = data['z_vec_mm']
     if save_name is None:
         save_name=filename
-
-    if 'step_size_mm' in data:
-        step_size_mm = float(data['step_size_mm'])
-    else:
-        step_size_mm = definitions.STEP_SIZE
 
     # 2. Convert to dB scale ONCE
     # Using 10*log10 for power/intensity output (DMAS/WDAS)
@@ -210,7 +224,7 @@ def plot_interactive_volume(filename, dynamic_range_db=6.0, use_Otsu=False, save
         surface_count=15,
         colorscale='inferno',
         caps=dict(x_show=False, y_show=False, z_show=False),
-        colorbar=dict(title='Effective S11 Return [dBFS]')
+        colorbar=dict(title='Intensity\n(dB, a.u.)')
     ))
 
     # 6. Define Camera View (X horizontal right, Y vertical up, Z depth into screen)
@@ -234,14 +248,33 @@ def plot_interactive_volume(filename, dynamic_range_db=6.0, use_Otsu=False, save
     )
 
     # 8. Save and display
-    out_path = f"{definitions.PROCESS_SAVE_FILE}/figures/{filename}/{filename}_{effective_dr:.1f}dB.html"
-    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    out_path_html = f"{definitions.PROCESS_SAVE_FILE}/figures/{filename}/{save_name}_{effective_dr:.1f}dB.html"
+    os.makedirs(os.path.dirname(out_path_html), exist_ok=True)
 
-    fig.write_html(out_path)
-    print(f"Saved interactive plot to {out_path}")
+    fig.write_html(out_path_html)
+    print(f"Saved interactive plot to {out_path_html}")
+    webbrowser.open(os.path.abspath(out_path_html))
 
-    webbrowser.open(os.path.abspath(out_path))
+    # Was used for report image generation
+    # out_path_png = f"{Path(__file__).resolve().parent.parent.parent.parent}/Report/Figures/{save_name}_{effective_dr:.1f}dB"
+    # fig.write_image(f"{out_path_png}.png", scale=1, width=700, height=500)
+    # print(f"Saved png to {out_path_png}.png")
+    # fig.update_layout(
+    #     scene=dict(
+    #         camera=dict(
+    #             up=dict(x=0, y=1, z=0),
+    #             center=dict(x=0, y=0, z=0),
+    #             eye=dict(x=2.5, y=0, z=0)  # Inverted X position to swing axes to bottom/left
+    #         ),
+    #         zaxis=dict(autorange="reversed")  # Flips depth direction if needed for bottom alignment
+    #     )
+    # )
+    # fig.write_image(f"{out_path_png}YZ.png", scale=1, width=500, height=470)
+    # print(f"Saved png to {out_path_png}YZ.png")
+
+    
 
 if __name__ == "__main__":
     main_filename = "PhantomFoil_2"
-    plot_interactive_volume(main_filename, dynamic_range_db=10.0, use_Otsu=False)
+    plot_interactive_volume(main_filename, dynamic_range_db=25.0, use_Otsu=False)
+    #plot_overlay_volumes("PhantomSteel_1", "PhantomSteel_1_svd_hybrid")

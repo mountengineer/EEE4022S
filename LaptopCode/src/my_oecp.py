@@ -80,41 +80,70 @@ def test_material(mut_name, vna, overwrite = False, ref_dir=definitions.OECP_REF
     freqs = np.asarray(s11_r1.f)
     epsilon = get_dielectric(freqs, s11_r1, s11_r2, s11_r3, s11_m)
 
+    save_path = os.path.join(definitions.OECP_SAVE_FILE, f"{mut_name}.e1p")
+    save_permittivity(save_path, freqs, epsilon)
+
+def plot_dielectric(mut_name, ax=None):
+    load_path = os.path.join(definitions.OECP_SAVE_FILE, f"{mut_name}.e1p")
+    freqs, epsilon = load_permittivity(load_path)
+
     freq_ghz = freqs / 1e9
-    # Filter data above 2 GHz 
-    mask = (freq_ghz >= 1)
+    mask = (freq_ghz >= 0)
     freq_plot = freq_ghz[mask]
 
-    # Extract real dielectric constant (ε') and loss factor (ε'')
     eps_real = np.real(epsilon[mask])
-    eps_imag = np.abs(np.imag(epsilon[mask]))  # abs() handles potential sign convention differences
-
-    # Create 2-panel plot for permittivity
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+    eps_imag = np.abs(np.imag(epsilon[mask])) 
+    
     real_broken = eps_real > 1e3
     eps_real[real_broken] = -1
     imag_broken = eps_imag > 1e3
     eps_imag[imag_broken] = -1
 
-    # Real Permittivity (ε')
-    ax1.plot(freq_plot, eps_real, color='navy', lw=2, label="ε' (Real)")
-    ax1.set_ylabel("Dielectric Constant (ε')")
-    #ax1.set_ylim([30, 50])
-    ax1.set_title("Material Under Test — Complex Permittivity Spectrum")
-    ax1.grid(True, linestyle='--', alpha=0.6)
-    ax1.legend(loc='upper right')
+    is_gui = ax is not None
 
-    # Imaginary Permittivity (ε'')
-    ax2.plot(freq_plot, eps_imag, color='crimson', lw=2, label="ε'' (Loss Factor)")
-    ax2.set_xlabel("Frequency (GHz)")
-    ax2.set_ylim([-1, 20])
-    ax2.set_ylabel("Loss Factor (ε'')")
-    ax2.grid(True, linestyle='--', alpha=0.6)
-    ax2.legend(loc='upper right')
+    if is_gui:
+        # Plot seamlessly on the single GUI panel using a secondary y-axis
+        ax.plot(freq_plot, eps_real, color='navy', lw=2, label="ε' (Real)")
+        ax.set_ylabel("Dielectric Constant (ε')", color='navy')
+        ax.tick_params(axis='y', labelcolor='navy')
+        
+        ax2 = ax.twinx()
+        ax2.plot(freq_plot, eps_imag, color='crimson', lw=2, label="ε'' (Loss Factor)")
+        ax2.set_ylabel("Loss Factor (ε'')", color='crimson')
+        ax2.tick_params(axis='y', labelcolor='crimson')
+        
+        ax.set_xlabel("Frequency (GHz)")
+        ax.set_title(f"Permittivity: {mut_name}")
+        ax.grid(True, linestyle='--', alpha=0.6)
+        
+        # Combine legends from both axes
+        lines_1, labels_1 = ax.get_legend_handles_labels()
+        lines_2, labels_2 = ax2.get_legend_handles_labels()
+        ax.legend(lines_1 + lines_2, labels_1 + labels_2, loc='upper right')
+        
+    else:
+        # Standalone plot generation
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
 
-    plt.tight_layout()
-    plt.savefig(f"{definitions.OECP_SAVE_FILE}/{mut_name}.png", dpi=300, bbox_inches='tight')
-    plt.close(fig)
+        ax1.plot(freq_plot, eps_real, color='navy', lw=2, label="ε' (Real)")
+        ax1.set_ylabel("Dielectric Constant (ε')")
+        ax1.set_title("Material Under Test — Complex Permittivity Spectrum")
+        ax1.grid(True, linestyle='--', alpha=0.6)
+        ax1.legend(loc='upper right')
+
+        ax2.plot(freq_plot, eps_imag, color='crimson', lw=2, label="ε'' (Loss Factor)")
+        ax2.set_xlabel("Frequency (GHz)")
+        ax2.set_ylim([-1, 20])
+        ax2.set_ylabel("Loss Factor (ε'')")
+        ax2.grid(True, linestyle='--', alpha=0.6)
+        ax2.legend(loc='upper right')
+
+        plt.tight_layout()
+        
+        # Create directory if it doesn't exist to prevent Errno 2
+        os.makedirs(definitions.OECP_PLOT_FILE, exist_ok=True)
+        plt.savefig(f"{definitions.OECP_PLOT_FILE}/{mut_name}.png", dpi=300, bbox_inches='tight')
+        plt.close(fig)
         
 def get_dielectric(freqs, r1, r2, r3, mut):
     n_freqs = freqs.shape[0]
@@ -161,3 +190,36 @@ def get_dielectric(freqs, r1, r2, r3, mut):
         eps_mut = getattr(komarov_model, 'epsilon', komarov_model)
     eps_mut = np.asarray(eps_mut).flatten()
     return eps_mut
+
+def save_permittivity(filepath, freqs, epsilon):
+    """
+    Saves complex permittivity data to a format similar to .s1p.
+    Format: Frequency (Hz) | Real Permittivity | Imaginary Permittivity
+    """
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'w') as f:
+        f.write("! Complex Permittivity Data\n")
+        f.write("! Format: Frequency (Hz) | e' (Real) | e'' (Imaginary)\n")
+        f.write("# HZ EPS RI\n") # Mimics Touchstone option line
+        for freq, eps in zip(freqs, epsilon):
+            f.write(f"{freq:.9e} {np.real(eps):.6f} {np.imag(eps):.6f}\n")
+    print(f"Permittivity data saved to {filepath}")
+
+def load_permittivity(filepath):
+    """
+    Loads complex permittivity data from the custom .e1p format.
+    Returns: freqs (numpy array), epsilon (numpy complex array)
+    """
+    freqs = []
+    eps_complex = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            line = line.strip()
+            # Ignore comments and the option line
+            if not line or line.startswith('!') or line.startswith('#'):
+                continue
+            parts = line.split()
+            if len(parts) == 3:
+                freqs.append(float(parts[0]))
+                eps_complex.append(complex(float(parts[1]), float(parts[2])))
+    return np.array(freqs), np.array(eps_complex)

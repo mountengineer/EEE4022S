@@ -1,18 +1,29 @@
 import matplotlib
+from pathlib import Path
+
+# Base directory targeting Proj/out/ relative to this file's location (Proj/src/)
+BASE_DIR = Path(__file__).resolve().parent.parent
+OUT_DIR = BASE_DIR / "out"
+REF_DIR = BASE_DIR / "ref"
+
+# Optional: ensure the output directory actually exists on disk
+OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+VNA_SAVE_FILE = str(OUT_DIR / "RasterScanOutputs")
+OECP_SAVE_FILE = str(OUT_DIR / "DielectricResults")
+OECP_PLOT_FILE = str(OUT_DIR / "DielectricPlots")
+VNA_MEASURE_FILE = str(OUT_DIR / "S11Outputs")
+VNA_PLOT_FILE = str(OUT_DIR / "S11Plots")
+PROCESS_SAVE_FILE = str(OUT_DIR / "Outputs")
+OECP_REF_FILE = str(REF_DIR / "OECPReferences")
+CAL_SAVE_PATH = str(REF_DIR / "Calibration")
+
 matplotlib.use("Agg")
 
 JETSON_IP = "192.168.180.2"
 PORT = 5005
 VNA_PORT = "COM10" # Need to figure out which port it will be on/set this dynamically
 BAUD = 115200
-
-VNA_SAVE_FILE = "ScanOutputs"
-OECP_SAVE_FILE = "DielectricOutputs"
-VNA_MEASURE_FILE = "S11Outputs"
-VNA_PLOT_FILE = "S11Plots"
-PROCESS_SAVE_FILE = "Outputs"
-OECP_REF_FILE = "OECPReferences"
-CAL_SAVE_PATH = "Calibration"
 
 #OECP Reference materials
 R1 = "Air"

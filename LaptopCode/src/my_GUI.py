@@ -22,7 +22,7 @@ import my_vna
 import my_jetson
 import my_oecp
 import plot3d
-import img_constr2 as img
+import img_constr as img
 
 
 # =====================================================================
@@ -64,6 +64,7 @@ LISTERS = {
     "volumes": lambda: _ls(f"{definitions.PROCESS_SAVE_FILE}/volumes", ".npz"),
     "measures": lambda: _ls(definitions.VNA_MEASURE_FILE, ".s1p"),
     "refs": lambda: _ls(definitions.OECP_REF_FILE, ".s1p"),
+    "permittivities": lambda: _ls(definitions.OECP_SAVE_FILE, ".e1p"),
 }
 
 SCAN_RE = re.compile(r"Scanned position: R:(\d+), C:(\d+)")
@@ -84,7 +85,7 @@ class QueueWriter:
 class RigGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("Rig & VNA Control Center (Independent)")
+        self.root.title("Rig & VNA Control Center")
         self.root.geometry("1180x880")
         self.root.minsize(950, 700)
 
@@ -137,12 +138,9 @@ class RigGUI:
 
         return {
             "Measure": [
-                ("Measure S11", self.measure_s11_mhz_wrapper, "args", [
-                    F("name", "Name", req=True, choices="measures"),
-                    F("f_start", "F start (MHz)", cur_start, "float"),
-                    F("f_stop", "F stop (MHz)", cur_stop, "float"),
-                    F("f_points", "Points", lambda: self.state.f_points, "int")],
-                 lambda gui, vals, t0: gui.show_measurement(vals["out_dir"], vals["name"], t0)),
+                ("Measure S11", self.cmd_measure, "args", [
+                    F("name", "Name", req=True, choices="measures")],
+                 lambda gui, vals, t0: gui.show_measurement(definitions.VNA_MEASURE_FILE, vals["name"], t0)),
                 ("Plot S11", lambda args: self.cmd_plot(args), "args", [
                     F("name", "Measurement name", req=True, choices="measures")],
                  lambda gui, vals, t0: gui.show_measurement(definitions.VNA_MEASURE_FILE, vals["name"], 0)),
@@ -154,6 +152,9 @@ class RigGUI:
                 ("Test Material (OECP)", lambda args: self.cmd_test_mut(args), "args", [
                     F("name", "MUT name", req=True, choices="measures"),
                     F("overwrite", "Re-measure / Overwrite", False, "bool")]),
+                ("Plot Permittivity", lambda args: self.cmd_plot_dielectric(args), "args", [
+                    F("name", "MUT name", req=True, choices="permittivities")], 
+                    lambda gui, vals, t0: gui.show_dielectric(vals["name"]))
             ],
             "Reconstruction": [
                 ("Anomaly Detection (Full Recon)", lambda args: self.cmd_recon(args), "args", [
@@ -161,7 +162,8 @@ class RigGUI:
                     F("ref_name", "Ref scan (blank=auto)", choices="scans"),
                     F("z_min", "Z min (mm)", 30.0, "float"),
                     F("z_max", "Z max (mm)", 180.0, "float"),
-                    F("margin_mm", "Margin (mm)", 0.0, "float")]),
+                    F("margin_mm", "Margin (mm)", 0.0, "float"),
+                    F("antenna_delay", "Antenna Delay (s)", 0.6e-9, "float")]),
                 ("Reconstruct 3D Volume", img.process_scan, "kw", [
                     F("tar_name", "Target scan", req=True, choices="scans"),
                     F("ref_name", "Reference scan (blank=default)", choices="scans"),
@@ -370,7 +372,7 @@ class RigGUI:
 
     def build_measure_plot_area(self, parent):
         """Creates the S11 measurement plot container on the right side of the Measure tab."""
-        plot_frame = ttk.LabelFrame(parent, text="S11 Measurement Plot")
+        plot_frame = ttk.LabelFrame(parent, text="Latest Plot")
         plot_frame.pack(fill="both", expand=True, padx=4, pady=4)
 
         self.fig = Figure(figsize=(5, 4), dpi=100)
@@ -578,6 +580,13 @@ class RigGUI:
             )
         ).grid(row=0, column=2, padx=6, pady=4)
 
+        ttk.Button(
+            conn, text="Disconnect VNA", 
+            command=lambda: self.run_task(
+                "disconnect-vna", lambda: self.cmd_disconnect_vna(), guard=False
+            )
+        ).grid(row=0, column=3, padx=6, pady=4)
+
         self.ip_var = tk.StringVar(value=self.state.jetson_ip)
         self.jport_var = tk.StringVar(value=str(self.state.jetson_port))
         ttk.Label(conn, text="Jetson IP / Port").grid(row=1, column=0, padx=4, pady=4, sticky="e")
@@ -594,6 +603,13 @@ class RigGUI:
                 guard=False
             )
         ).grid(row=1, column=2, padx=6, pady=4)
+
+        ttk.Button(
+            conn, text="Disconnect Rig", 
+            command=lambda: self.run_task(
+                "disconnect-jetson", lambda: self.cmd_disconnect_jetson(), guard=False
+            )
+        ).grid(row=1, column=3, padx=6, pady=4)
 
         # Motion & Jog Controls
         jog = ttk.LabelFrame(tab, text="Rig Motion & Manual Jog Control")
@@ -651,12 +667,28 @@ class RigGUI:
             return
         try:
             net = skrf.Network(path)
-            self.ax.clear()
+            self.fig.clf()
+            self.ax = self.fig.add_subplot(111)
             self.ax.plot(net.f / 1e9, net.s_db[:, 0, 0], linewidth=1.5, color="#0066cc")
             self.ax.set_title(f"S11 Measurement: {name}")
             self.ax.set_xlabel("Frequency (GHz)")
             self.ax.set_ylabel("Magnitude (dB)")
             self.ax.grid(True, linestyle="--", alpha=0.6)
+            self.fig.tight_layout()
+            self.mcanvas.draw_idle()
+        except Exception as e:
+            self.log(f"[Plot Error] {e}")
+
+    def show_dielectric(self, name):
+        """Displays the calculated permittivity on the GUI canvas."""
+        try:
+            # Clear any previous twinx axes if they exist
+            self.fig.clf() 
+            self.ax = self.fig.add_subplot(111)
+            
+            # Pass the GUI's specific axis to the plot function
+            my_oecp.plot_dielectric(name, ax=self.ax)
+            
             self.fig.tight_layout()
             self.mcanvas.draw_idle()
         except Exception as e:
@@ -861,6 +893,32 @@ class RigGUI:
         finally:
             self.refresh_status()
 
+    def cmd_disconnect_vna(self):
+        """Disconnects the active VNA connection."""
+        if self.state.vna:
+            print("Disconnecting from VNA...")
+            try:
+                # Attempt to close if the skrf network/pyvisa object supports it
+                self.state.vna.close() 
+            except Exception:
+                pass
+            self.state.vna = None
+            self.state.vna_port = "COM10"
+            print("VNA successfully disconnected.")
+        self.refresh_status()
+
+    def cmd_disconnect_jetson(self):
+        """Closes the TCP socket connection to the motion rig."""
+        if self.state.jetson_sock:
+            print("Disconnecting from Motion Rig...")
+            try:
+                self.state.jetson_sock.close()
+            except Exception:
+                pass
+            self.state.jetson_sock = None
+            print("Motion Rig successfully disconnected.")
+        self.refresh_status()
+
     def cmd_connect_jetson(self, ip, port):
         """Establishes TCP socket connection to the motion rig."""
         try:
@@ -1044,35 +1102,34 @@ class RigGUI:
         except Exception as e:
             print(f"[Error] Material test failed: {e}")
 
+    def cmd_plot_dielectric(self, args):
+        """Plots the complex permittivity calculated by OECP"""
+        if not args or args[0] in (None, ""):
+            print("[Error] MUT name required.")
+            return
+        mut_name = args[0]
+        try:
+            my_oecp.plot_dielectric(mut_name)
+        except Exception as e:
+            print(f"[Error] Dielectric plot has failed: {e}")
+
     def cmd_recon(self, args):
-        """Performs automated anomaly detection reconstruction (Normal DAS + SVD/Hybrid)."""
         if not args or args[0] in (None, ""):
             print("[Error] Target scan name required.")
             return
         tar_name = args[0]
-        margin_mm = float(args[1]) if len(args) > 1 and args[1] not in (None, "") else 0.0
-        ref_name = args[2] if len(args) > 2 and args[2] not in (None, "") else None
-        z_min = float(args[3]) if len(args) > 3 and args[3] not in (None, "") else 30.0
-        z_max = float(args[4]) if len(args) > 4 and args[4] not in (None, "") else 180.0
-        
-        use_ref = True if (ref_name is not None and ref_name != "") else False
+        ref_name = args[1] if len(args) > 1 and args[1] not in (None, "") else None
+        z_min     = float(args[2]) if len(args) > 2 and args[2] not in (None, "") else 80.0
+        z_max     = float(args[3]) if len(args) > 3 and args[3] not in (None, "") else 230.0
+        margin_mm = float(args[4]) if len(args) > 4 and args[4] not in (None, "") else 0.0
+        antenna_delay = float(args[5]) if len(args) > 5 and args[5] not in (None, "") else 0.6e-9
 
-        # Step 1: Standard / Normal Reconstruction
-        print(f"[Anomaly Detection] Step 1: Creating normal image for '{tar_name}'...")
-        img.process_scan(
-            tar_name=tar_name, ref_name=ref_name, margin_mm=margin_mm,
-            z_min=z_min, z_max=z_max, use_ref=use_ref,
-            use_svd=False, weighting_mode="none", save_name=f"{tar_name}"
-        )
+        common = dict(tar_name=tar_name, ref_name=ref_name, use_ref=True,   # blank ref -> auto "<tar>_ref"
+                    margin_mm=margin_mm, z_min=z_min, z_max=z_max,
+                    antenna_delay=antenna_delay)
 
-        # Step 2: Enhanced Reconstruction (SVD Clutter Removal + Hybrid WDAS)
-        print(f"[Anomaly Detection] Step 2: Creating SVD + Hybrid image for '{tar_name}'...")
-        img.process_scan(
-            tar_name=tar_name, ref_name=ref_name, margin_mm=margin_mm,
-            z_min=z_min, z_max=z_max, use_ref=use_ref,
-            use_svd=True, weighting_mode="hybrid", save_name=f"{tar_name}_svd"
-        )
-
+        img.process_scan(**common, use_svd=False, weighting_mode="none", save_name=tar_name)
+        img.process_scan(**common, use_svd=True,  weighting_mode="hybrid", save_name=f"{tar_name}_svd")
         plot3d.plot_overlay_volumes(tar_name, f"{tar_name}_svd")
 
 

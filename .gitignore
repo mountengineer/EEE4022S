@@ -1,1 +1,10 @@
 LaptopCode/out/
+LaptopCode/src/__pycache__
+LaptopCode/src/dielectric_plotting.py
+LaptopCode/src/dielectric_plotting2.py
+LaptopCode/src/dielectric_plotting3.py
+LaptopCode/src/plot3d2.py
+LaptopCode/src/time_saver.py
+LaptopCode/src/plot_s1p.py
+ReportWorking/
+Report/

@@ -1071,8 +1071,8 @@ def plot_img(img, num_rows, num_cols, tum_x=0.0, tum_y=0.0, tum_rad=0.0, adi_rad
 
 def save_3d_volume(vol_3d, x_vec_mm, y_vec_mm, z_vec_mm, save_dir, step_size_mm=None):
     """Saves reconstructed 3D volume and spatial grid metadata to .npz file."""
-    os.makedirs(save_dir, exist_ok=True)
     filename = f"{save_dir}.npz"
+    os.makedirs(os.path.dirname(filename), exist_ok=True)
     
     save_kwargs = {
         'vol_3d': vol_3d,
@@ -1163,11 +1163,16 @@ def subtract_saved_volumes(vol1_name, vol2_name, output_name):
 
 def process_scan(tar_name, ref_name=None, vox_x=50, vox_y=50, vox_z=50, margin_mm = 0.0, 
                  z_min=30.0, z_max=200.0, prop_speed=3e8, antenna_min_freq = definitions.ANTENNA_MIN_FREQ,
-                 antenna_max_freq = definitions.ANTENNA_MAX_FREQ, antenna_delay=0.5e-9, start_time= 0.1e-9, end_time=5e-9, 
+                 antenna_max_freq = definitions.ANTENNA_MAX_FREQ, antenna_delay=0.5e-9, start_time=None, end_time=None, 
                  use_ref=True, cf_power=1.0, dist_power=1.0, weighting_mode='hybrid', use_svd=True, use_auto_time_gate=False,
                  pulse_duration_ns=0.8e-9, save_name=None, use_spatial_mean_subtraction=False):
     if ref_name is None and use_ref:
         ref_name = f"{tar_name}_ref"
+    C = 3e8
+    if start_time is None:
+        start_time = max((z_min / 1000 / C) + antenna_delay - 0.2e-9, 0.1e-9)
+    if end_time is None:
+        end_time = min(z_max / 1000 / C + antenna_delay + 0.5e-9, 5e-9)
 
     if save_name is None:
         save_name = tar_name
@@ -1201,6 +1206,10 @@ def process_scan(tar_name, ref_name=None, vox_x=50, vox_y=50, vox_z=50, margin_m
     if use_spatial_mean_subtraction:
         spatial_mean = np.mean(cal_data_clean, axis=1, keepdims=True)
         cal_data_clean = cal_data_clean - spatial_mean
+    
+    if use_svd:
+        # Remove clutter
+        cal_data_clean = svd_clutter_removal(cal_data_clean, num_components_to_remove=1)
 
     print("Computing ICZT time domain signal...")
     td_data = iczt(cal_data_clean, ini_t=start_time, fin_t=end_time,
@@ -1210,9 +1219,6 @@ def process_scan(tar_name, ref_name=None, vox_x=50, vox_y=50, vox_z=50, margin_m
         scan_times = np.linspace(start_time, end_time, definitions.N_TIME_POINTS)
         td_data = auto_time_gate(td_data, scan_times, pulse_duration_ns=pulse_duration_ns)
 
-    if use_svd:
-        # Remove clutter
-        td_data = svd_clutter_removal(td_data, num_components_to_remove=1)
 
     plot_sample_time_signals(td_data, ini_t=start_time, fin_t=end_time, probe_coordinates=probe_coordinates, filename=tar_name)
 
